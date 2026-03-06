@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AES-256加解密</title>
+<style>
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;padding:10px;background:#f4f4f6;font-family:system-ui}
+main{max-width:500px;margin:0 auto;background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 10px #0002}
+h2{text-align:center;margin-top:0}
+label{display:block;margin:8px 0 4px;font-weight:500}
+input,textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px}
+textarea{min-height:90px}
+.btns{display:flex;gap:10px;margin:14px 0}
+.mini-btns{display:flex;gap:6px;margin:6px 0}
+
+button{
+flex:1;padding:12px;border:none;border-radius:8px;
+background:#007bff;color:#fff;font-weight:600;
+transition:0.15s;
+-webkit-tap-highlight-color:transparent;
+}
+button:active{opacity:0.7;transform:scale(0.96)}
+button.secondary{background:#28a745}
+button.danger{background:#dc3545}
+button.mini{flex:1;padding:8px;font-size:13px;background:#6c757d}
+
+.switch-group{display:flex;align-items:center;gap:8px;margin:10px 0;padding:8px;background:#f8f9fa;border-radius:8px}
+.switch{position:relative;display:inline-block;width:40px;height:22px}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:#ccc;transition:.4s;border-radius:22px}
+.slider:before{position:absolute;content:"";height:16px;width:16px;left:3px;bottom:3px;background-color:white;transition:.4s;border-radius:50%}
+input:checked + .slider{background-color:#28a745}
+input:checked + .slider:before{transform:translateX(18px)}
+
+.toast{position:fixed;bottom:30px;left:50%;transform:translate(-50%,0);background:#333;color:#fff;padding:10px 20px;border-radius:8px;opacity:0;transition:all 0.3s;z-index:999}
+.toast.show{opacity:1;transform:translate(-50%,-20px)}
+</style>
+</head>
+<body>
+<main>
+<h2>AES-256-GCM 加解密</h2>
+
+<label>密钥(Base64)</label>
+<div class="mini-btns">
+<button class="mini" onclick="copyKey()">复制密钥</button>
+<button class="mini" onclick="pasteKey()">粘贴密钥</button>
+<button class="mini" onclick="clearKey()">清空密钥</button>
+</div>
+<input id="key" placeholder="32字节Base64密钥">
+
+<div class="switch-group">
+<label class="switch">
+<input type="checkbox" id="saveKeySwitch">
+<span class="slider"></span>
+</label>
+<span>是否保存密钥（本地）</span>
+</div>
+
+<div class="btns">
+<button class="secondary" onclick="generateKey()">生成随机密钥</button>
+<button class="danger" onclick="clearSavedKey()">删除保存的密钥</button>
+</div>
+
+<label>明文</label>
+<div class="mini-btns">
+<button class="mini" onclick="copyPlain()">复制明文</button>
+<button class="mini" onclick="pastePlain()">粘贴明文</button>
+<button class="mini" onclick="clearPlain()">清空明文</button>
+</div>
+<textarea id="plain" placeholder="输入文字"></textarea>
+
+<label>密文（每次不同）</label>
+<div class="mini-btns">
+<button class="mini" onclick="copyCipher()">复制密文</button>
+<button class="mini" onclick="pasteCipher()">粘贴密文</button>
+<button class="mini" onclick="clearCipher()">清空密文</button>
+</div>
+<textarea id="cipher" placeholder="密文"></textarea>
+
+<div class="btns">
+<button onclick="encrypt()">加密</button>
+<button onclick="decrypt()">解密</button>
+</div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ========== 你自己的固定盐，改这里 ==========
+const FIXED_SALT = "my_app_salt_2025_secret";
+
+function b64u8(b){const s=atob(b);let a=new Uint8Array(s.length);for(let i=0;i<s.length;i++)a[i]=s.charCodeAt(i);return a}
+function u8b64(a){let s='';a.forEach(c=>s+=String.fromCharCode(c));return btoa(s)}
+
+async function sha256Bytes(data) {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(data);
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return new Uint8Array(hash);
+}
+
+// 真实密钥 = 用户输入密钥 + 固定盐 再sha256
+async function getRealKey(userKeyB64) {
+  const userKey = b64u8(userKeyB64);
+  const userKeyStr = u8b64(userKey);
+  const combined = userKeyStr + FIXED_SALT;
+  return await sha256Bytes(combined);
+}
+
+function showToast(msg) {
+const t = document.getElementById('toast');
+t.textContent = msg;
+t.classList.add('show');
+setTimeout(()=>t.classList.remove('show'), 1400);
+}
+
+// 密钥
+function copyKey(){
+const t=document.getElementById('key');
+navigator.clipboard.writeText(t.value).then(()=>showToast("已复制密钥"));
+}
+function pasteKey(){
+document.getElementById('key').focus();
+showToast("请长按输入框粘贴");
+}
+function clearKey(){
+document.getElementById('key').value='';
+showToast("已清空密钥");
+}
+
+// 明文
+function copyPlain(){
+const t=document.getElementById('plain');
+navigator.clipboard.writeText(t.value).then(()=>showToast("已复制明文"));
+}
+function pastePlain(){
+document.getElementById('plain').focus();
+showToast("请长按输入框粘贴");
+}
+function clearPlain(){
+document.getElementById('plain').value='';
+showToast("已清空明文");
+}
+
+// 密文
+function copyCipher(){
+const t=document.getElementById('cipher');
+navigator.clipboard.writeText(t.value).then(()=>showToast("已复制密文"));
+}
+function pasteCipher(){
+document.getElementById('cipher').focus();
+showToast("请长按输入框粘贴");
+}
+function clearCipher(){
+document.getElementById('cipher').value='';
+showToast("已清空密文");
+}
+
+const STORAGE_KEY = 'aes256_tool_saved_key';
+
+window.onload = function() {
+const savedKey = localStorage.getItem(STORAGE_KEY);
+if (savedKey) {
+document.getElementById('key').value = savedKey;
+document.getElementById('saveKeySwitch').checked = true;
+}
+
+document.getElementById('saveKeySwitch').addEventListener('change', function() {
+const keyInput = document.getElementById('key');
+if (this.checked) {
+if (keyInput.value) {
+localStorage.setItem(STORAGE_KEY, keyInput.value);
+showToast("已保存");
+} else {
+showToast("请输入密钥");
+this.checked = false;
+}
+} else {
+localStorage.removeItem(STORAGE_KEY);
+showToast("已删除");
+}
+});
+
+document.getElementById('key').addEventListener('input', function() {
+const saveSwitch = document.getElementById('saveKeySwitch');
+if (saveSwitch.checked) {
+localStorage.setItem(STORAGE_KEY, this.value);
+}
+});
+};
+
+function generateKey() {
+const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+const keyB64 = u8b64(keyBytes);
+document.getElementById('key').value = keyB64;
+const saveSwitch = document.getElementById('saveKeySwitch');
+if (saveSwitch.checked) {
+localStorage.setItem(STORAGE_KEY, keyB64);
+}
+}
+
+function clearSavedKey() {
+localStorage.removeItem(STORAGE_KEY);
+document.getElementById('key').value='';
+document.getElementById('saveKeySwitch').checked = false;
+showToast("已删除");
+}
+
+async function encrypt(){
+const k=document.getElementById('key').value,t=document.getElementById('plain').value;
+if(!k||!t)return showToast('请填密钥和明文');
+try{
+const realKeyBytes = await getRealKey(k);
+const key=await crypto.subtle.importKey('raw',realKeyBytes,'AES-GCM',false,['encrypt']);
+const iv = crypto.getRandomValues(new Uint8Array(12));
+const enc=new TextEncoder().encode(t);
+const cipherBuffer = await crypto.subtle.encrypt({name:'AES-GCM',iv},key,enc);
+const cipherBytes = new Uint8Array(cipherBuffer);
+const combined = new Uint8Array(iv.length + cipherBytes.length);
+combined.set(iv,0);
+combined.set(cipherBytes,iv.length);
+document.getElementById('cipher').value = u8b64(combined);
+showToast("加密成功");
+}catch(e){console.error(e);showToast('加密失败')}
+}
+
+async function decrypt(){
+const k=document.getElementById('key').value,c=document.getElementById('cipher').value;
+if(!k||!c)return showToast('请填密钥和密文');
+try{
+const realKeyBytes = await getRealKey(k);
+const key=await crypto.subtle.importKey('raw',realKeyBytes,'AES-GCM',false,['decrypt']);
+const combined = b64u8(c);
+const iv = combined.slice(0,12);
+const cipherBytes = combined.slice(12);
+const plainBuffer = await crypto.subtle.decrypt({name:'AES-GCM',iv},key,cipherBytes);
+const plain = new TextDecoder().decode(plainBuffer);
+document.getElementById('plain').value = plain;
+showToast("解密成功");
+}catch(e){console.error(e);showToast('解密失败')}
+}
+</script>
+</body>
+</html>
